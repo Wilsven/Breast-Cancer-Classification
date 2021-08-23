@@ -1,0 +1,524 @@
+---
+title: "Breast Cancer Detection"
+author: "Wilsven Leong"
+date: "8/21/2021"
+output: pdf_document
+---
+
+```{r Global Settings, echo=FALSE}
+knitr::opts_chunk$set(echo = FALSE)
+knitr::opts_chunk$set(warning = FALSE)
+knitr::opts_chunk$set(message = FALSE)
+```
+
+# Introduction
+
+According to the American Cancer Society, breast cancer is the most common cancer in American women, except for skin cancers. The average risk of a woman in the United States developing breast cancer sometime in her life is about 13%. This means there is a 1 in 8 chance she will develop breast cancer.
+
+### Trends in Breast Cancer Incidence
+
+Incidence rates have increased by 0.5% annually in recent years.
+
+### Trends in Breast Cancer Deaths
+
+Breast cancer is the second leading cause of cancer death in women and the chance that a woman will die from breast cancer is about 1 in 39 (about 2.6%). Since 2007, breast cancer death rates have been steady in women younger than 50, but have continued to decrease in older women. From 2013 to 2018, the death rate went down by 1% per year.
+
+One of the reasons for these decreases is believed to be the result of finding breast cancer earlier through screening which will be the focus of this project.
+
+# Objective
+
+In this project, classification models will aim to determine whether a tumor is benign and malignant by identifying cytological attributes (features) which are significant in breast cancer patients. This project will make use of data from a study on breast cancerreferring to 699 patients. The actual data can be found at [UCI Machine Learning Repository](https://archive.ics.uci.edu/ml/datasets/Breast+Cancer+Wisconsin+(Diagnostic)). The variables were computed from a digitized image of a breast mass and describe characteristics of the cell nucleus present in the image. In particular the features are tabulated in the following:
+
+  a) radius (mean of distances from center to points on the perimeter)
+  b) texture (standard deviation of gray-scale values)
+	c) perimeter
+	d) area
+	e) smoothness (local variation in radius lengths)
+	f) compactness (perimeter^2 / area - 1.0)
+	g) concavity (severity of concave portions of the contour)
+	h) concave points (number of concave portions of the contour)
+	i) symmetry 
+	j) fractal dimension ("coastline approximation" - 1)
+
+```{r Load libraries}
+# Load libraries
+library(tidyverse)
+library(dplyr)
+library(ggplot2)
+library(ggthemes)
+library(corrgram)
+library(corrplot)
+library(caret)
+```
+
+# Data Cleaning
+
+```{r Read data}
+# Read data
+url <- "https://archive.ics.uci.edu/ml/machine-learning-databases/breast-cancer-wisconsin/wdbc.data"
+
+col_names <- names <- c('id_number', 'diagnosis', 'radius_mean', 
+         'texture_mean', 'perimeter_mean', 'area_mean', 
+         'smoothness_mean', 'compactness_mean', 
+         'concavity_mean','concave_points_mean', 
+         'symmetry_mean', 'fractal_dimension_mean',
+         'radius_se', 'texture_se', 'perimeter_se', 
+         'area_se', 'smoothness_se', 'compactness_se', 
+         'concavity_se', 'concave_points_se', 
+         'symmetry_se', 'fractal_dimension_se', 
+         'radius_worst', 'texture_worst', 
+         'perimeter_worst', 'area_worst', 
+         'smoothness_worst', 'compactness_worst', 
+         'concavity_worst', 'concave_points_worst', 
+         'symmetry_worst', 'fractal_dimension_worst')
+
+data <- read.csv(file = url, header = FALSE,
+                 col.names = col_names)
+str(data)
+```
+
+```{r clear environment}
+rm(url, col_names, GCtorture, names)
+```
+
+We should start by checking for missing values.
+
+```{r Check for missing values}
+sum(is.na(data))
+```
+
+We will also remove the `id_number` variable which doesn't provide value to our classification models. We will also convert our `diagnosis` varaible from character into factor.
+
+```{r Remove id_number and convert diagnosis to factors}
+data <- data %>%
+  select(-id_number) %>%
+  mutate(diagnosis = as.factor(diagnosis))
+
+summary(data)
+```
+
+# Exploratory Data Analysis
+
+Looking at the proportions of *benign* and *malignant* observations, we are fortunate that this data set does not suffer from *class imbalance*. Class imbalance refers to when a target class within a data set is outnumbered by the other target class (or classes). This can lead to misleading accuracy metrics, known as accuracy paradox. High acurracies can be obtained even when making predictions simply by guessing.
+
+```{r Diagnosis in a table}
+library(kableExtra)
+
+kable(prop.table(table(data$diagnosis)),
+      col.names = c("Diagnosis", "Proportions")) %>%
+  kable_styling(bootstrap_options = c("striped", "hover", "condensed"))
+```
+
+We can also visualize the number of diagnosis results in a countplot.
+
+```{r Diagnosis countplot}
+data %>%
+  ggplot(aes(diagnosis, fill = diagnosis)) +
+  geom_bar() +
+  geom_text(stat = "Count", aes(label = ..count..), vjust = 2) +
+  scale_x_discrete(breaks = c(0, 1),
+                   labels = c("Benign", "Malignant")) +
+  theme_fivethirtyeight() +
+  theme(axis.title.y = element_text(),
+        legend.position = "right",
+        legend.direction = "vertical") +
+  scale_fill_fivethirtyeight(name = "Diagnosis",
+                             labels = c("Benign", "Malignant")) +
+  labs(y ="Count", title = "No. of Benign & Malignant Cases")
+``` 
+
+After data cleaning, we can see that we now have 569 valid observations, of which 357 has a *benign* breast tumor and the other 212 has a *malignant* breast tumor.
+
+## Univariate Data Analysis
+
+We will perform some univariate data analysis to get an idea how cases might be dependent on the variables, if any. Let's take a look at `diagnosis` and `radius_mean.`
+
+```{r Distribution cases and radius mean}
+data %>%
+  ggplot(aes(radius_mean, fill = diagnosis)) +
+  geom_histogram(bins = 30) +
+  theme_fivethirtyeight() +
+  theme(axis.title = element_text(),
+        legend.position = "right",
+        legend.direction = "vertical") +
+  scale_fill_fivethirtyeight(name = "Diagnosis",
+                             labels = c("Benign", "Malignant")) +
+  labs(x = "Radius mean", y = "Count", 
+       title = "Distribution of Cases based on Radius Mean")
+```
+
+```{r Boxplot of cases and radius mean}
+data %>%
+  ggplot(aes(diagnosis, radius_mean)) +
+  geom_boxplot() +
+  theme_fivethirtyeight() +
+  theme(axis.title.y = element_text()) +
+  labs(y = "Radius mean", 
+       title = "Boxplot of Cases based on Radius Mean")
+```
+This univariate analysis shows that large tumor radius most likely belongs to *malignant* tumors. It should already make sense that when radius is large, perimeter and area of the tumor which follow a linear relationship with radius, will also be large. 
+
+Therefore, I will only be showing the boxplots of perimeter and area in the following visualizations to further showcase my point.
+
+```{r Boxplot of cases and perimeter/area mean}
+x <- data %>%
+  ggplot(aes(diagnosis, perimeter_mean)) +
+  geom_boxplot() +
+  theme_fivethirtyeight() +
+  theme(axis.title.y = element_text()) +
+  labs(y = "Perimeter mean", 
+       title = "Boxplot of Cases based on Perimeter Mean")
+
+y <- data %>%
+  ggplot(aes(diagnosis, area_mean)) +
+  geom_boxplot() +
+  theme_fivethirtyeight() +
+  theme(axis.title.y = element_text()) +
+  labs(y = "Area mean", 
+       title = "Boxplot of Cases based on Area Mean")
+
+library(gridExtra)
+grid.arrange(x, y, ncol = 1)
+rm(x, y)
+```
+
+## Bivariate Data Analysis
+
+It would also be interesting to investigate how some independent variables relate to one another and how the `diagnosis` depend on said relationships. 
+
+```{r How Cases relate to Radius and Texture}
+data %>%
+  ggplot(aes(radius_mean, texture_mean, colour = diagnosis)) +
+  geom_point() +
+  theme_fivethirtyeight() +
+  theme(axis.title = element_text(),
+        legend.position = "right",
+        legend.direction = "vertical") +
+  scale_colour_fivethirtyeight(name = "Diagnosis",
+                             labels = c("Benign", "Malignant")) +
+  labs(x = "Radius mean", y = "Texture Mean", 
+       title = "How Cases relate to Radius and Texture")
+```
+
+We can see that with two variables only, we can visually separate most of the *benign* and *malignant* tumors. Obviously, this isn't sufficient and we will have to make use of more independent variables in our classification models to accurately predict as many correct cases as possible. 
+
+## Correlation Plot
+
+Let"s now view the correlation plot between the independent variables.
+
+```{r Corrplot}
+# Correlation of only the independent variables, exclude diagnosis
+corrplot(cor(data[, -1]), type = "lower", tl.srt = 90, tl.cex = .7)
+```
+
+Looking at the correlation between the independent variables, we can see that some variables are highly correlated. This can potentially lead to problems arising from multicollinearity.
+
+Recall in our univariate and bivariate analyses above that `radius_mean`, `perimeter_mean` and `area_mean` are highly correlated with one another. 
+
+```{r Select highly correlated variables}
+highlyCor <- colnames(data)[findCorrelation(cor(data[, -1]), cutoff = 0.9, verbose = TRUE)]
+```
+
+```{r Print out highly correlated variable names}
+highlyCor
+```
+
+There are ten features with correlation higher than 0.9. Excluding these variables from unsupervised machine learning algorithms when developing for predictive models may be beneficial.
+
+However, since the models we will be building involves supervised machine learning algorithms, we will leave all variables untouched. 
+
+We split the data set into our training and test sets in a 80-20% split. We will use the training set to train our model along with some optimization of the hyperparameters, and use our test set as the unseen data. This will be a useful final metric to let us know how well our model does.
+
+# Splitting the Data Set
+
+```{r Split data}
+set.seed(1, sample.kind = "Rounding")
+
+train_index <- createDataPartition(data$diagnosis, 
+                                   times = 1, p = .8, list = FALSE)
+train <- data[train_index,]
+test <- data[-train_index,]
+```
+
+```{r Proportion table of Train}
+kable(prop.table(table(train$diagnosis)),
+      col.names = c("Diagnosis", "Proportion")) %>%
+  kable_styling(bootstrap_options = c("striped", "hover", "condensed"))
+```
+
+```{r Proportion of Test}
+kable(prop.table(table(test$diagnosis)),
+      col.names = c("Diagnosis", "Proportion")) %>%
+  kable_styling(bootstrap_options = c("striped", "hover", "condensed"))
+```
+
+As we can see, the proportion of cases in both the train and test sets are similar. 
+
+# Principal Component Analysis
+
+Principal component analysis (PCA) is a technique for transforming data sets in order to reduce dimensionality without reducing the number of features. This is done by identifying the principal components which explain as much of the data variance as possible. PCA can be used to improve visualization of multidimensional data and, potentially, to improve the predictive accuracy of classification models.
+
+Below is a table and plot of the percentages of variance explained by the top 10 principal components. 
+
+```{r Principal Component Analysis}
+pca <- prcomp(train[-1], center = TRUE, scale. = TRUE)
+
+# Calculate variance scores per principal component
+cov <- pca$sdev^2/sum(pca$sdev^2)
+
+cov_table <- data.frame("PC" = c(1:30),
+                  "Variance" = round(cov*100, 2))[1:10, ]
+
+kable(cov_table, caption = "Variance Explained by Top 10 PCs") %>%
+  kable_styling(bootstrap_options = c("striped", "hover", "condensed"))
+```
+
+```{r Cumulative Variance of top 10 PCs}
+cov_table %>%
+  ggplot(aes(PC, Variance)) +
+  geom_point() +
+  geom_line() +
+  scale_x_continuous(breaks = seq(min(cov_table$PC), 
+                                  max(cov_table$PC), 
+                                  by = 1)) +
+  theme_fivethirtyeight() +
+  theme(axis.title = element_text(),
+        legend.position = "right",
+        legend.direction = "vertical") +
+  labs(x = "PC", y = "Variance", 
+       title = "Variance Explained by Top 10 PCs")
+```
+
+Let's also plot box plots for each of the first 10 principal components grouped by diagnosis. In most cases the spread is greater for *malignant* tumors than for *benign* tumors. PC1 is the only component for which the interquartile ranges do not overlap. Principal component analysis does not take into account the classification of data, in this case the diagnosis assigned to each sample. 
+
+```{r Box plot for Top 10 PCs}
+data.frame(pca$x[, 1:10], Diagnosis = train$diagnosis) %>%
+  gather(key = "PC", value = "Value", - Diagnosis) %>%
+  ggplot(aes(PC, Value, fill = Diagnosis)) + 
+  geom_boxplot() +
+  scale_fill_fivethirtyeight(name = "Diagnosis",
+                             labels = c("Benign", "Malignant")) +
+  theme_fivethirtyeight() +
+  theme(axis.title.y = element_text(),
+        legend.position = "right",
+        legend.direction = "vertical") +
+  labs(y = "Value", 
+       title = "Box plot of Top 10 PCs")
+```
+
+Below is the two-dimensional scatter plot of the first two principal components. From the plot, it shows that the *malignant* data points are more spreaded out than the *benign* data points and that more of the variance can be accounted for on the $x$-axis (PC1) than on the $y$-axis (PC2). 
+
+The two ellipses drawn on the plot help to visualize this even better. A larger ellipse is needed for the *malignant* data points than for *benign* data points. A distinct separation of data by classification visually is possible, despite some overlap. Therefore, this analysis support the use of PCA in classification algorithm development to predict diagnosis from this data set.
+
+```{r Scatter plot of PC2 vs PC1}
+data.frame(pca$x[, 1:2], Diagnosis = train$diagnosis) %>%
+  ggplot(aes(PC1, PC2, colour = Diagnosis)) +
+  geom_point() +
+  stat_ellipse() +
+  scale_colour_fivethirtyeight(name = "Diagnosis",
+                               labels = c("Benign", "Malignant")) +
+  theme_fivethirtyeight() +
+  theme(axis.title = element_text(),
+        legend.position = "right",
+        legend.direction = "vertical") +
+  labs(x = paste("PC1: ", round(cov[1]*100, 1), "%"), 
+       y = paste("PC2: ", round(cov[2]*100, 1), "%"), 
+       title = "Scatter plot of PC2 vs PC1")
+```
+
+# Classification Models 
+
+Classification models aim to predict the target class for new observations, that is, predicting the output from a given set of predicting or independent variables. In this project, we will train several classification models including Naive Bayes, Logistic Regression, Decision Tree and lastly, Random Forest.
+
+```{r Train control}
+# Define train control parameters for appropriate models
+fitControl <- trainControl(method = "repeatedcv",
+                           number = 10, # 10-fold cross-validation
+                           repeats = 10, # repeat each cross-validation 10 times
+                           classProbs = TRUE, # class probabilities computed
+                           returnResamp = "final", # only save the final resampled summary metrics
+                           savePredictions = "final") # only save the final predictions for each resample
+```
+
+## Naive Bayes
+
+The Naive Bayesian classifier is based on Bayes’ theorem with the independence assumptions between predictors. A Naive Bayesian model is easy to build, with no complicated iterative parameter estimation which makes it particularly useful for very large data sets. Bayes theorem provides a way of calculating the posterior probability, P(c|x), from P(c), P(x), and P(x|c). Naive Bayes classifier assume that the effect of the value of a predictor (x) on a given class (c) is independent of the values of other predictors. This assumption is called class conditional independence.
+
+```{r Naive Bayes}
+set.seed(1, sample.kind = "Rounding")
+
+nb <- train(train[-1], train$diagnosis, 
+            method = "nb", trControl = fitControl)
+
+nb_pred <- predict(nb, test[-1])
+
+# Confusion Matrix
+cm_nb <- confusionMatrix(nb_pred, test$diagnosis, positive = "M")
+```
+
+```{r Store results Naive Bayes}
+nb_res <- round(data.frame("Accuracy" = cm_nb$overall["Accuracy"],
+                           "Senstivity" = cm_nb$byClass["Sensitivity"],
+                           "Specificity" = cm_nb$byClass["Specificity"],
+                           "F1" = cm_nb$byClass["F1"],
+                           "False Neg. Rate" = 1-cm_nb$byClass["Sensitivity"],
+                           "False Pos. Rate" = 1-cm_nb$byClass["Specificity"],
+                           row.names = "Naive Bayes"), 2)
+```
+
+## Logistic Regression
+
+Logistic regression is probably the most commonly used form of generalized linear model (GLM). Linear regression assumes that the predictor, $X$, and the outcome $Y$, follow a bivariate normal distribution such that the conditional expectation, i.e. the expected outcome $Y$ for a given predictor $X$, fits the regression line. Logistic regression is therefore an extension of linear regression.
+
+```{r Logistic Regression}
+set.seed(1, sample.kind = "Rounding")
+
+glm <- train(train[-1], train$diagnosis,
+             method = "glm", 
+             trControl = fitControl)
+
+glm_pred <- predict(glm, test[-1])
+
+# Confusion Matrix
+cm_glm <- confusionMatrix(glm_pred, test$diagnosis, positive = "M")
+```
+
+```{r Store results Logistic Regression}
+glm_res <- round(data.frame("Accuracy" = cm_glm$overall["Accuracy"],
+                      "Senstivity" = cm_glm$byClass["Sensitivity"],
+                      "Specificity" = cm_glm$byClass["Specificity"],
+                      "F1" = cm_glm$byClass["F1"],
+                      "False Neg. Rate" = 1-cm_glm$byClass["Sensitivity"],
+                      "False Pos. Rate" = 1-cm_glm$byClass["Specificity"],
+                      row.names = "Logistic Regression"), 2)
+```
+
+## Logistic Regression (PCA)
+
+```{r Logistic Regression PCA}
+set.seed(1, sample.kind = "Rounding")
+
+glmPCA <- train(train[-1], train$diagnosis,
+             method = "glm", 
+             trControl = fitControl,
+             preProcess = c("center", "scale", "pca"))
+
+glmPCA_pred <- predict(glmPCA, test[-1])
+
+# Confusion Matrix
+cm_glmPCA <- confusionMatrix(glmPCA_pred, test$diagnosis, positive = "M")
+```
+
+```{r Store results Logistic Regression PCA}
+glmPCA_res <- round(data.frame("Accuracy" = cm_glmPCA$overall["Accuracy"],
+                               "Senstivity" = cm_glmPCA$byClass["Sensitivity"],
+                               "Specificity" = cm_glmPCA$byClass["Specificity"],
+                               "F1" = cm_glmPCA$byClass["F1"],
+                          "False Neg. Rate" = 1-cm_glmPCA$byClass["Sensitivity"],
+                          "False Pos. Rate" = 1-cm_glmPCA$byClass["Specificity"],
+                          row.names = "Logistic Regression (PCA)"), 2)
+```
+
+## Decision Tree
+
+```{r Decision Tree}
+set.seed(1, sample.kind = "Rounding")
+
+fit.Control <- trainControl(method = "repeatedcv",
+                            number = 10, ## 10-fold CV
+                            repeats = 10,## repeated three times
+                            # USE AUC
+                            summaryFunction = twoClassSummary,
+                            classProbs = TRUE)
+
+grid.Control <- expand.grid(maxdepth = 2:10)
+
+tree <- train(train[-1], train$diagnosis,
+              method = "rpart2",
+              tuneGrid = grid.Control, 
+              trControl = fit.Control,
+              metric = "ROC")
+```
+
+```{r ROC vs Max Tree Depth}
+plot(tree)
+```
+
+From the ROC plot above, the optimal max tree depth is 4.
+
+```{r Plot Decision Tree}
+library(rattle)
+
+fancyRpartPlot(tree$finalModel)
+```
+
+```{r Predict and Confusion Matrix Decision Tree}
+tree_pred <- predict(tree, test[-1])
+
+# Confusion Matrix
+cm_tree <- confusionMatrix(tree_pred, test$diagnosis, positive = "M")
+```
+
+```{r Store results Decision Tree}
+tree_res <- round(data.frame("Accuracy" = cm_tree$overall["Accuracy"],
+                             "Senstivity" = cm_tree$byClass["Sensitivity"],
+                             "Specificity" = cm_tree$byClass["Specificity"],
+                             "F1" = cm_tree$byClass["F1"],
+                            "False Neg. Rate" = 1-cm_tree$byClass["Sensitivity"],
+                            "False Pos. Rate" = 1-cm_tree$byClass["Specificity"],
+                            row.names = "Decision Tree"), 2)
+```
+
+## Random Forest
+
+As previously described, models can suffer from diminished performance due to multidimensionality of data. PCA can be useful to reduce problems with multicollinearity by reducing the number of features required for pre-processing. 
+Decisions trees are another way to address this issue, effectively partitioning the data such that final predictions can be made on a smaller subset of predictors. This is also known as "Bagging".
+
+Bagging, also known as bootstrap aggregation, helps avoid overfitting to the training set by effectively creating an ensemble ('forest') of multiple decision trees and averaging over all the predictions from each of these trees to form a final prediction. 
+
+```{r Random Forest}
+set.seed(1, sample.kind = "Rounding")
+
+rf <- train(train[-1], train$diagnosis,
+            method = "rf",
+            tuneGrid = data.frame(mtry = seq(3, 15, 2)),
+            trControl = fitControl,
+            importance = TRUE)
+
+rf_pred <- predict(rf, test[-1])
+
+# Confusion Matrix
+cm_rf <- confusionMatrix(rf_pred, test$diagnosis, positive = "M")
+```
+
+```{r Store results Random Forest}
+rf_res <- round(data.frame("Accuracy" = cm_rf$overall["Accuracy"],
+                           "Senstivity" = cm_rf$byClass["Sensitivity"],
+                           "Specificity" = cm_rf$byClass["Specificity"],
+                           "F1" = cm_rf$byClass["F1"],
+                           "False Neg. Rate" = 1-cm_rf$byClass["Sensitivity"],
+                           "False Pos. Rate" = 1-cm_rf$byClass["Specificity"],
+                           row.names = "Random Forest"), 2)
+```
+
+```{r Combine results}
+final_res <- rbind(nb_res,
+                   glm_res,
+                   glmPCA_res,
+                   tree_res,
+                   rf_res)
+
+kable(final_res, caption = "Final Results") %>%
+  kable_styling(bootstrap_options = c("striped", "hover", "condensed")) %>%
+  row_spec(5, bold = TRUE, color = "white", background = "#d88277")
+```
+
+# Conclusion
+
+From our initial exploration of the data, we have hypothesized that tumor size is a significant predictor of whether a tumor is benign or malignant. In our final conclusion, we can see that all the models performed extremely well and this can be further explained by the extreme difference in size features (i.e. radius, perimeter and area) between benign and malignant tumors.
+
+In our case of cancer prediction, it is crucial that we minimize our Type II error. Since a *malignant* diagnosis is regarded as a *positive* test, we should be aiming to maximize our Sensitivity of our model. 
+
+From the table above, we can see that Logistic Regression with PCA and Random Forest have the highest Sensitivity. While Type I error is less expensive than Type II, it is nonetheless desirable and in this case, a perfect tiebreaker for our chosen model. 
+
+Once again, from the table above, we can see that the Random Forest takes the cake with a whooping Specificity of 99.0%, beating all other models.
